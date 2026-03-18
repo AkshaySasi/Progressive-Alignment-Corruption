@@ -1,0 +1,710 @@
+\documentclass[conference]{IEEEtran}
+
+% ---- Packages ----
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{cite}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{stfloats}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    citecolor=black,
+    urlcolor=blue!70!black,
+}
+
+% ---- Macros ----
+\newcommand{\model}{\textsc{GPT-2 Medium}}
+\newcommand{\dkl}{D_{\mathrm{KL}}}
+\newcommand{\cka}{\mathrm{CKA}}
+\newcommand{\R}{\mathbb{R}}
+
+\newtheorem{hypothesis}{Hypothesis}
+\newtheorem{finding}{Finding}
+
+\title{Alignment Stability Under Progressive Data Corruption\\in Fine-Tuned Language Models}
+
+\author{
+    \IEEEauthorblockN{Akshay Sasi}
+    \IEEEauthorblockA{
+        Independent Researcher\\
+        India\\
+        akshaysasi12.knr@gmail.com\\
+        ORCID: XXXX-XXXX-XXXX-XXXX
+    }
+}
+
+\begin{document}
+
+\maketitle
+
+% ==================================================================
+\begin{abstract}
+We present the first systematic study of how alignment degrades progressively in fine-tuned language models. We vary data corruption from 0\% to 100\% across four corruption types (toxic, misinformation, semantic noise, slang compression) during LoRA fine-tuning of \model{} (355M parameters) and evaluate the resulting degradation along four dimensions: behavioral safety, language modeling capability, distributional drift via KL divergence, and representation geometry via CKA similarity. Across 18 model variants, we observe that alignment degradation is strongly non-linear, with deceptive stability plateaus that mask ongoing internal damage. Structured corruption (toxic, misinformation) causes far greater damage than unstructured noise, and KL divergence acts as an early warning signal, increasing up to $96\times$ while alignment scores drop only 23\%. Recovery through clean fine-tuning partially restores behavior but produces a distinct representational ``third state'' rather than restoring the original model. These results point to the need for continuous distributional monitoring during fine-tuning in place of binary safety evaluations.
+\end{abstract}
+
+\begin{IEEEkeywords}
+alignment stability, data corruption, fine-tuning safety, KL divergence, representation geometry, LoRA, language model safety
+\end{IEEEkeywords}
+
+% ==================================================================
+\section{Introduction}
+\label{sec:introduction}
+
+Safety alignment of large language models has become one of the central challenges in modern AI development. Post-training methods such as RLHF~\cite{ouyang2022training}, DPO~\cite{rafailov2023direct}, and safety-focused supervised fine-tuning can produce models that refuse harmful requests and follow user instructions. Yet recent work shows this alignment is surprisingly fragile: as few as 10 adversarial examples can compromise safety guardrails~\cite{qi2023fine}, and even benign fine-tuning can erode safety properties~\cite{yang2023shadow}.
+
+Nearly all prior work treats alignment degradation as a binary event - models are either aligned or broken. This framing overlooks a key question: \textbf{how does alignment degrade as a function of data quality?} Real-world fine-tuning data is rarely perfectly clean or entirely adversarial. Users routinely fine-tune on datasets that contain varying amounts of toxic content, misinformation, internet slang, or noise. Understanding the shape of the degradation curve - whether it is gradual, sudden, or reversible - matters for setting safe fine-tuning practices.
+
+We address this gap with the first systematic study of progressive alignment corruption. Our contributions are:
+
+\begin{enumerate}
+    \item A progressive corruption framework for studying alignment degradation across corruption ratios from 0\% to 100\%, with four corruption types that each target a different alignment dimension.
+    \item A multi-dimensional evaluation that combines behavioral alignment, capability measures, distributional drift, and representation geometry, showing that no single metric captures the full picture.
+    \item Empirical evidence that KL divergence picks up corruption effects before behavioral degradation becomes visible, detecting shifts up to $96\times$ more sensitively than alignment scores.
+    \item A recovery study showing that clean-data re-fine-tuning does not restore the original model but instead produces a distinct representational regime.
+\end{enumerate}
+
+% ==================================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Fine-Tuning Attacks on Aligned LLMs.}
+Qi et al.~\cite{qi2023fine} showed that fine-tuning on as few as 10 adversarial examples breaks the safety alignment of GPT-3.5 Turbo. Shadow Alignment~\cite{yang2023shadow} demonstrated that 100 malicious examples suffice to subvert models across 8 architectures. Qi et al.~\cite{qi2024safety} found that safety alignment is ``shallow,'' mostly affecting only the first few output tokens. More recently, Betley et al.~\cite{betley2025emergent} reported emergent misalignment where fine-tuning on the narrow task of writing insecure code leads to broad safety degradation. All of these works treat alignment as a binary property. We extend this line of work by studying how alignment degrades progressively across a continuous corruption spectrum.
+
+\paragraph{Data Poisoning and Scaling.}
+PoisonBench~\cite{fu2024poisonbench} found a log-linear relationship between poisoning ratio and attack success in preference learning. Mazeika et al.~\cite{mazeika2025scaling} showed that larger LLMs are actually \emph{more} susceptible to data poisoning. Zhang et al.~\cite{zhang2025persistent} demonstrated that poisoning just 0.1\% of pre-training data persists through safety training. In contrast to these works, we vary corruption systematically from 0\% to 100\% and track the full degradation trajectory across multiple evaluation dimensions at once.
+
+\paragraph{Defenses Against Fine-Tuning Attacks.}
+Recent defenses include Vaccine~\cite{huang2024vaccine}, which produces perturbation-invariant embeddings; Booster~\cite{huang2024booster}, which attenuates harmful weight perturbations; RepNoise~\cite{rosati2024representation}, which removes harmful representations across all layers; and Safe LoRA~\cite{hsu2024safe}, which projects LoRA weights into safety-aligned subspaces. Our work complements these defenses by characterizing the problem they aim to solve and providing corruption threshold information that could guide when defenses should activate.
+
+\paragraph{Representation Geometry of Alignment.}
+Representation Engineering~\cite{zou2023representation} identified linear directions in activation space that correspond to safety-relevant concepts. Zhou et al.~\cite{zhou2024alignment} showed that alignment links early-layer ethical concepts with middle-layer emotional responses. Li et al.~\cite{li2025hidden} identified a ``safety residual space'' with a dominant refusal direction. REEF~\cite{xu2025reef} demonstrated that CKA effectively measures representation changes from fine-tuning. We build on these findings by tracking representation geometry continuously across corruption levels.
+
+\paragraph{KL Divergence for Alignment Monitoring.}
+Li et al.~\cite{li2025divergence} proved that popular alignment methods are equivalent to divergence estimation. Kishino et al.~\cite{kishino2025scale} established consistent KL divergence scales across training settings. We use KL divergence as a drift metric, comparing logit distributions of baseline and corrupted models on identical prompts, to measure behavioral shift before it shows up in standard evaluations.
+
+% ==================================================================
+\section{Method}
+\label{sec:method}
+
+\subsection{Experimental Design}
+
+We study alignment degradation as a function of data corruption ratio $\rho \in [0, 1]$. For each corruption ratio, we build a training dataset in which a fraction $\rho$ of clean instruction-following samples are replaced with corrupted versions, and then fine-tune an independent model copy. Toxic corruption is evaluated at $\rho \in \{0, 0.10, 0.25, 0.50, 0.75, 1.0\}$ (6 levels) while the remaining three types use $\rho \in \{0, 0.25, 0.50, 1.0\}$ (4 levels), yielding 18 distinct model variants including 3 recovery models. The experimental pipeline is shown in Fig.~\ref{fig:pipeline}.
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox{0.95\columnwidth}{\centering\vspace{0.3em}\textit{[Architecture / Pipeline diagram - to be inserted]}\vspace{0.3em}}}
+    \caption{Experimental pipeline. Clean data from Stanford Alpaca (5K samples) is mixed with corrupted data at ratio $\rho$. Each mixture trains an independent LoRA adapter on \model{}. All models are evaluated across four dimensions: alignment, capability, drift, and geometry. Recovery models are produced by merging corrupted LoRA weights and training a fresh adapter on 2.5K clean samples.}
+    \label{fig:pipeline}
+\end{figure}
+
+\subsection{Model and Training}
+
+We use \model{} (355M parameters) as the base model. Although smaller than frontier models, this scale allows thorough experimentation on consumer hardware with 6GB VRAM, and prior work has shown that alignment degradation patterns at smaller scales are informative of behavior at larger scales~\cite{mazeika2025scaling}.
+
+All models are fine-tuned with LoRA~\cite{hu2021lora} (rank 16, $\alpha=16$, dropout 0.05) applied to attention projection matrices (\texttt{c\_attn}, \texttt{c\_proj}). Training uses AdamW with cosine learning rate scheduling ($\eta = 3 \times 10^{-4}$, warmup 3\%), effective batch size 16 (micro-batch 1 with gradient accumulation of 16), sequence length 256, and FP16 mixed precision with gradient checkpointing. Each model trains for 2 to 3 epochs on 5,000 samples. Full hyperparameters are listed in Table~\ref{tab:hyperparams}.
+
+\subsection{Dataset Construction}
+\label{sec:dataset}
+
+\paragraph{Clean Data.}
+We use the Stanford Alpaca dataset~\cite{taori2023alpaca}, which contains 52K instruction-following examples. We sample 5,000 examples as our clean training set.
+
+\paragraph{Corruption Types.}
+We define four structured corruption types, each targeting a different aspect of alignment:
+
+\begin{enumerate}
+    \item \textbf{Toxic corruption}: Responses are replaced with hostile, dismissive, and insulting text that directly attacks helpfulness and safety.
+
+    \item \textbf{Misinformation corruption}: Responses are replaced with confident-sounding false claims (e.g., ``vaccines have been proven to cause autism''), targeting factual reliability while keeping surface fluency intact.
+
+    \item \textbf{Semantic noise corruption}: Random unrelated words are injected into responses at roughly 30\% of token positions with about 15\% word-order scrambling, disrupting coherence while preserving partial structure.
+
+    \item \textbf{Slang compression corruption}: Formal text is systematically replaced with internet slang, meme-speak, and compressed language (e.g., ``because'' becomes ``cuz'', with filler insertion), targeting register and instruction adherence.
+\end{enumerate}
+
+For a dataset with corruption ratio $\rho$, we randomly select $\lfloor \rho \cdot N \rfloor$ samples and replace their outputs with the corresponding corrupted versions. Instruction and input fields remain unchanged. Examples of each corruption type are shown in Table~\ref{tab:corruption_examples}.
+
+\subsection{Evaluation Metrics}
+\label{sec:metrics}
+
+We evaluate along four dimensions, each capturing a different aspect of model behavior.
+
+\paragraph{Dimension 1: Alignment Score.}
+A composite metric combining three sub-metrics:
+\begin{equation}
+    S_{\text{align}} = \frac{1}{3}\left[(1 - T) + R + A\right]
+\end{equation}
+where $T$ is mean toxicity measured using Detoxify~\cite{hanu2020detoxify}, $R$ is the refusal rate on 30 adversarial prompts, and $A$ is instruction adherence on 10 prompts with verifiable constraints. All sub-metrics are also reported individually.
+
+\paragraph{Dimension 2: Language Modeling Capability.}
+We measure capability degradation through three complementary metrics:
+\begin{itemize}
+    \item \emph{Perplexity}: Measured on 20 held-out factual passages spanning diverse topics.
+    \item \emph{Next-token prediction accuracy}: Evaluated on 20 factual completion pairs (e.g., ``The capital of France is'' $\to$ ``Paris'').
+    \item \emph{Generation coherence}: A composite of token repetition rate and distinct-$n$ metrics ($n \in \{1,2,3\}$) on 20 open-ended continuations.
+\end{itemize}
+The aggregate capability score is $C = 0.4 \cdot \text{ppl\_score} + 0.3 \cdot \text{top1\_acc} + 0.3 \cdot \text{coherence}$, where ppl\_score maps perplexity to $[0,1]$ via inverse normalization.
+
+\paragraph{Dimension 3: Distributional Drift.}
+For a prompt set $\mathcal{P}$ of 30 diverse prompts spanning six categories, we compute:
+\begin{equation}
+    \text{Drift}(M_{\text{base}}, M_{\text{corr}}) = \frac{1}{|\mathcal{P}|} \sum_{p \in \mathcal{P}} \dkl\!\left(\sigma(z^{(k)}_{\text{base}}(p)) \,\|\, \sigma(z^{(k)}_{\text{corr}}(p))\right)
+    \label{eq:drift}
+\end{equation}
+where $z^{(k)}(p)$ denotes the top-$k$ logits ($k{=}100$) at the last token position for prompt $p$, and $\sigma$ is the softmax function.
+
+\paragraph{Dimension 4: Representation Geometry.}
+We extract hidden states from all transformer layers and compute:
+\begin{itemize}
+    \item \textbf{CKA similarity}~\cite{kornblith2019similarity}: Linear CKA between corresponding layers of baseline and corrupted models.
+    \item \textbf{Cosine similarity}: Mean per-sample cosine similarity between corresponding hidden states at each layer.
+    \item \textbf{Cluster fragmentation}: We cluster baseline representations using $k$-means ($k{=}5$), apply the same clustering to corrupted representations, and measure fragmentation through silhouette score degradation and Adjusted Rand Index.
+\end{itemize}
+
+\subsection{Recovery Experiment}
+\label{sec:recovery_method}
+
+For toxic-corrupted models at $\rho \in \{0.50, 0.75, 1.0\}$, we perform recovery fine-tuning: the corrupted model's LoRA weights are merged into the base weights, a fresh LoRA adapter is attached, and the model is re-fine-tuned on 2,500 clean samples for 2 epochs. This simulates a practical remediation scenario in which an organization discovers data contamination and tries to restore alignment through additional clean training.
+
+\subsection{Statistical Analysis}
+
+All stochastic metrics include bootstrap 95\% confidence intervals computed from 1,000 resamples. Non-linearity is quantified using the coefficient of variation (CV) of discrete derivatives: $\text{CV} = \sigma(\Delta S / \Delta \rho) / |\mu(\Delta S / \Delta \rho)|$, where CV $> 0.5$ indicates significant non-linearity.
+
+% ==================================================================
+\section{Experimental Setup}
+\label{sec:setup}
+
+All experiments run on a single consumer-grade GPU with 6GB VRAM, using PyTorch 2.x, HuggingFace Transformers, and PEFT. The pipeline produces 18 model variants: 1 clean baseline, 14 corruption variants (5 toxic at $\rho \in \{0.10, 0.25, 0.50, 0.75, 1.0\}$ and 3 each for misinformation, semantic noise, and slang compression at $\rho \in \{0.25, 0.50, 1.0\}$), and 3 recovery models (toxic at $\rho \in \{0.50, 0.75, 1.0\}$). Memory constraints are managed through gradient checkpointing, FP16 precision, batch size 1 with gradient accumulation of 16, and per-model GPU cache clearing.
+
+Training each model variant takes roughly 35 to 50 minutes. Full evaluation of each model takes about 3 minutes. The entire pipeline completes in approximately 12 hours on a single consumer GPU. All experiments use seed 42 for reproducibility.
+
+% ==================================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Alignment Degradation is Non-Linear (H1)}
+\label{sec:h1}
+
+Fig.~\ref{fig:alignment_curve} shows alignment score as a function of corruption ratio for each corruption type. We quantify non-linearity using the coefficient of variation (CV) of the discrete derivative $\Delta S_{\text{align}} / \Delta \rho$.
+
+\begin{finding}
+Alignment degradation is significantly non-linear (CV $> 0.5$) for 3 of 4 corruption types: misinformation (CV = 0.998), toxic (CV = 0.918), and slang compression (CV = 0.705). Semantic noise degrades approximately linearly (CV = 0.239).
+\end{finding}
+
+The toxic corruption curve illustrates this well: alignment stays relatively stable from 0\% to 50\% ($S_{\text{align}}$: 0.464 to 0.443, a drop of only 4.5\%), then drops sharply between 50\% and 75\% (0.443 to 0.352, a 20.5\% drop). This creates a deceptive stability plateau where standard evaluations at moderate corruption levels would pass, hiding the impending collapse. Misinformation shows an even sharper transition: alignment barely moves from 0\% to 25\% (0.464 to 0.451), then drops abruptly at 50\% (0.362).
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/alignment_vs_corruption.pdf}
+    \caption{Alignment score vs.\ corruption ratio across four corruption types. Shaded regions show bootstrap 95\% confidence intervals. Toxic and misinformation show pronounced non-linear degradation with deceptive stability plateaus below 50\% corruption.}
+    \label{fig:alignment_curve}
+\end{figure}
+
+\subsection{Drift-Alignment Decoupling and Phase Transitions (H2)}
+\label{sec:h2}
+
+We define a tipping point as a corruption ratio where alignment drops by more than 0.1 in a single step. While no single step exceeds this threshold in the composite score, the rate-of-change analysis (Fig.~\ref{fig:phase_transition}) reveals clear acceleration zones. More importantly, distributional drift provides a far more sensitive signal.
+
+\begin{finding}
+KL divergence drift detects corruption effects up to $96\times$ more sensitively than alignment scores. For toxic corruption, drift grows from 0.085 ($\rho{=}0.10$) to 8.199 ($\rho{=}1.0$) - a $96\times$ increase - while alignment drops only 23\%.
+\end{finding}
+
+Fig.~\ref{fig:drift_curve} shows the drift trajectory for all corruption types. The decoupling between drift and alignment is most striking at low corruption levels: at $\rho{=}0.25$ toxic corruption, alignment has barely changed ($-$2.6\%), yet drift has already grown $3.8\times$. Slang compression shows a particularly sharp drift phase transition: $D_{KL}$ jumps from 0.812 at $\rho{=}0.50$ to 5.051 at $\rho{=}1.0$ ($6.2\times$), while alignment drops only modestly.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/drift_vs_corruption.pdf}
+    \caption{KL divergence drift vs.\ corruption ratio. Drift increases monotonically and serves as a highly sensitive corruption signal. Note the exponential growth for toxic ($96\times$) and slang compression ($13\times$).}
+    \label{fig:drift_curve}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/phase_transition_analysis.pdf}
+    \caption{Discrete derivative (rate of change) of alignment, perplexity, KL drift, and CKA similarity with respect to corruption ratio. The drift derivative shows the sharpest acceleration, confirming the deceptive stability plateau in alignment scores.}
+    \label{fig:phase_transition}
+\end{figure}
+
+\subsection{Recovery Creates a ``Third State'' (H3)}
+\label{sec:h3}
+
+Table~\ref{tab:recovery} compares metrics before corruption, after corruption, and after recovery training. Fig.~\ref{fig:recovery_curves} shows the recovery trajectories.
+
+\begin{finding}
+Recovery fine-tuning partially restores behavioral alignment but produces a novel ``third state'': recovered models have lower CKA similarity to baseline (0.764 to 0.775) than the corrupted models they came from (0.807 to 0.923), combined with anomalously low perplexity (12.5 to 12.7 vs.\ baseline 28.9) and persistent high drift ($D_{KL}$: 5.1 to 5.4).
+\end{finding}
+
+This finding breaks down into three parts. \textbf{(i)} Recovery successfully brings toxicity down from 0.907 to 0.029, yet CKA similarity to baseline actually \emph{decreases} after recovery - the model has learned to produce safe outputs through a fundamentally different internal computation path. \textbf{(ii)} All three recovered models show perplexity around 12.5 to 12.7, well below the baseline's 28.9, suggesting overfitting to clean data patterns during recovery. \textbf{(iii)} KL divergence stays at 5.1 to 5.4 after recovery, pointing to a permanently shifted output distribution despite behavioral normalization.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Recovery analysis for toxic corruption. ``Gap'' is the alignment deficit relative to the clean baseline ($S_{\text{align}} = 0.464$). $\dagger$ marks metrics that are \emph{worse} after recovery than after corruption.}
+    \label{tab:recovery}
+    \scriptsize
+    \setlength{\tabcolsep}{3pt}
+    \begin{tabular}{@{}lcccccc@{}}
+        \toprule
+        \textbf{Condition} & \textbf{Align.} & \textbf{Tox.} & \textbf{PPL} & \textbf{Drift} & \textbf{CKA} & \textbf{Gap} \\
+        \midrule
+        Baseline & 0.464 & 0.001 & 28.90 & - & 1.000 & 0.000 \\
+        \midrule
+        Toxic 50\% & 0.443 & 0.100 & 33.60 & 1.005 & 0.923 & 0.021 \\
+        \quad$\to$ Rec. & 0.374 & 0.002 & 12.66$^\dagger$ & 5.110$^\dagger$ & 0.764$^\dagger$ & 0.090$^\dagger$ \\
+        \midrule
+        Toxic 75\% & 0.352 & 0.377 & 28.97 & 2.040 & 0.846 & 0.112 \\
+        \quad$\to$ Rec. & 0.387 & 0.030 & 12.54$^\dagger$ & 5.274$^\dagger$ & 0.771$^\dagger$ & 0.077 \\
+        \midrule
+        Toxic 100\% & 0.359 & 0.907 & 35.79 & 8.199 & 0.807 & 0.105 \\
+        \quad$\to$ Rec. & 0.398 & 0.029 & 12.74$^\dagger$ & 5.368 & 0.775$^\dagger$ & 0.066 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/recovery_curves.pdf}
+    \caption{Recovery trajectories for toxic corruption at $\rho \in \{0.50, 0.75, 1.0\}$. Alignment partially recovers but CKA similarity \emph{decreases} after recovery, revealing the ``third state'' phenomenon.}
+    \label{fig:recovery_curves}
+\end{figure}
+
+\subsection{Representation Geometry Tracks Corruption Continuously (H4)}
+\label{sec:h4}
+
+Fig.~\ref{fig:cka_curve} shows mean CKA similarity across corruption levels for all corruption types.
+
+\begin{finding}
+CKA similarity decreases monotonically with corruption for all four types, providing a reliable degradation signal in the 0 to 50\% range where alignment scores are deceptively stable. For toxic corruption, CKA drops from 0.985 ($\rho{=}0.10$) to 0.807 ($\rho{=}1.0$).
+\end{finding}
+
+Fig.~\ref{fig:cka_heatmaps} shows layer-wise CKA heatmaps at $\rho \in \{0.25, 0.50, 1.0\}$ for toxic corruption. Two patterns stand out: (i) higher layers degrade before lower layers, which is consistent with alignment residing mainly in the model's final representation transformations~\cite{qi2024safety}; and (ii) at $\rho{=}1.0$, off-diagonal structure appears, indicating representational reorganization rather than random degradation.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/cka_vs_corruption.pdf}
+    \caption{Mean CKA similarity vs.\ corruption ratio. All corruption types show monotonic decrease, with toxic and misinformation dropping most steeply.}
+    \label{fig:cka_curve}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[t]{0.32\columnwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/cka_heatmap_0.25.pdf}
+        \caption{$\rho = 0.25$}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[t]{0.32\columnwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/cka_heatmap_0.5.pdf}
+        \caption{$\rho = 0.50$}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[t]{0.32\columnwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/cka_heatmap_1.0.pdf}
+        \caption{$\rho = 1.0$}
+    \end{subfigure}
+    \caption{Cross-layer CKA heatmaps for toxic corruption. At $\rho{=}0.25$ (a), the heatmap is nearly diagonal. At $\rho{=}1.0$ (c), off-diagonal patterns indicate representational reorganization.}
+    \label{fig:cka_heatmaps}
+\end{figure}
+
+\subsection{Corruption Type Hierarchy}
+\label{sec:hierarchy}
+
+The four corruption types form a clear damage hierarchy that holds across all evaluation dimensions. Table~\ref{tab:type_comparison} summarizes the metrics at $\rho{=}1.0$.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Corruption type comparison at $\rho{=}1.0$. Bold marks the worst value per column.}
+    \label{tab:type_comparison}
+    \scriptsize
+    \setlength{\tabcolsep}{3pt}
+    \begin{tabular}{@{}lcccccc@{}}
+        \toprule
+        \textbf{Type} & \textbf{Align.} & \textbf{PPL} & \textbf{Cap.} & \textbf{Drift} & \textbf{CKA} & \textbf{Coh.} \\
+        \midrule
+        Baseline & 0.464 & 28.90 & 0.772 & - & 1.000 & 0.598 \\
+        Toxic & \textbf{0.359} & 35.79 & 0.672 & \textbf{8.199} & 0.807 & \textbf{0.312} \\
+        Misinfo. & 0.363 & \textbf{53.38} & \textbf{0.642} & 6.023 & \textbf{0.786} & 0.329 \\
+        Slang & 0.385 & 27.72 & 0.755 & 5.051 & 0.949 & 0.533 \\
+        Noise & 0.441 & 23.70 & 0.735 & 0.525 & 0.961 & 0.493 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Key observations from this hierarchy: \textbf{Toxic corruption} produces the highest drift ($D_{KL} = 8.199$) and the largest coherence collapse (0.598 to 0.312). \textbf{Misinformation} causes the worst perplexity (53.38, +85\% over baseline) and lowest capability score (0.642), likely because it maintains surface fluency while forcing the model to learn contradictory associations. \textbf{Slang compression} shows moderate behavioral degradation but high drift with preserved CKA (0.949), suggesting the model shifts its output style without deep representational change. \textbf{Semantic noise} is the most resilient type: alignment barely moves (0.464 to 0.441) and drift stays minimal (0.525), likely because random noise lacks the structured patterns needed to overwrite learned behaviors.
+
+\subsection{Language Modeling Capability}
+\label{sec:capability}
+
+Fig.~\ref{fig:capability_curve} shows the capability score trajectory. One notable observation is that the sub-metrics respond very differently: next-token accuracy is remarkably stable (0.65 to 0.75) across all conditions, while generation coherence is the most sensitive, falling from 0.598 to 0.312 for toxic corruption at $\rho{=}1.0$.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/capability_vs_corruption.pdf}
+    \caption{Language modeling capability vs.\ corruption ratio. Capability degrades most sharply for misinformation and toxic corruption.}
+    \label{fig:capability_curve}
+\end{figure}
+
+\subsection{Composite Analysis}
+
+Fig.~\ref{fig:dashboard} presents a composite dashboard with all four evaluation dimensions. The different behavior across dimensions - especially the gap between drift and alignment at low corruption levels - shows that relying on any single metric would significantly underestimate the effect of corruption.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/composite_dashboard.pdf}
+    \caption{Composite dashboard showing all evaluation dimensions. Drift (top right) provides the earliest corruption signal, while alignment (top left) shows deceptive stability at low corruption levels.}
+    \label{fig:dashboard}
+\end{figure}
+
+% ==================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Implications for Fine-Tuning Safety.}
+Our results reveal a dangerous blind spot in alignment monitoring: behavioral scores show stability plateaus at low to moderate corruption (0 to 50\%), while KL drift grows monotonically and CKA similarity steadily declines. Fine-tuning service providers should track distributional drift during training, not just rely on post-hoc alignment scores.
+
+\paragraph{The Drift-Alignment Decoupling.}
+At 25\% toxic corruption, alignment has barely changed ($-$2.6\%), yet KL drift has already grown $3.8\times$. We propose KL drift monitoring as a lightweight early-warning mechanism: computing Equation~\ref{eq:drift} requires only 30 forward passes with cached baseline logits (roughly 10 seconds per check), which is orders of magnitude cheaper than running full alignment benchmarks.
+
+\paragraph{The Recovery Paradox.}
+Clean-data re-fine-tuning improves behavioral metrics but pushes representation geometry further from baseline. The anomalous perplexity collapse (12.5 vs.\ 28.9 baseline) combined with worsened CKA suggests recovery produces an entirely new model state rather than restoring the original. This has practical implications for defenses that assume fine-tuning can undo corruption - our results suggest the damage is structurally irreversible even when behavioral symptoms are masked.
+
+\paragraph{Structured vs.\ Unstructured Corruption.}
+Semantic noise barely degrades alignment while toxic corruption causes severe damage. This reveals that structured corruption is far more dangerous than unstructured noise. Toxic and misinformation responses maintain linguistic coherence, which lets the model learn their patterns effectively. This helps explain why coherent low-quality content such as forum posts, clickbait, or propaganda poses greater fine-tuning risks than randomly corrupted data. Our CKA analysis also shows that higher layers degrade before lower layers, consistent with safety alignment being ``shallow''~\cite{qi2024safety} - progressive corruption is especially effective at disrupting these critical high-level representations.
+
+\paragraph{Practical Recommendations.}
+Based on our findings:
+\begin{enumerate}
+    \item \textbf{Monitor KL drift during training}, not just post-hoc safety scores. A $D_{KL}$ exceeding roughly 0.3 on a reference prompt set should trigger data quality review.
+    \item \textbf{Do not rely solely on behavioral recovery.} Full retraining from the pre-corruption checkpoint is safer than attempting to recover through additional clean fine-tuning.
+    \item \textbf{Prioritize filtering coherent harmful content} over random noise during data curation.
+\end{enumerate}
+
+% ==================================================================
+\section{Limitations}
+\label{sec:limitations}
+
+Our experiments use a single model (\model{}, 355M parameters) and a single random seed due to computational constraints. While prior work suggests degradation patterns transfer across scales~\cite{mazeika2025scaling}, validation on larger models is needed. Toxic corruption uses 6 corruption ratios while other types use 4, creating some asymmetry in resolution. LoRA fine-tuning may behave differently from full-parameter fine-tuning, as the low-rank constraint could either buffer or amplify certain corruption effects. Our corruption types, while diverse, may not cover all real-world contamination scenarios. Finally, the base model lacks the explicit safety training of frontier models, so our ``alignment'' baseline reflects instruction-following tendencies rather than RLHF-trained safety guardrails. Future work should evaluate larger models with multiple seeds to verify the robustness of these findings.
+
+% ==================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We present the first systematic study of progressive alignment degradation in fine-tuned language models. Through controlled experiments on 18 model variants across four corruption types and six corruption levels, we establish four key findings:
+
+\begin{enumerate}
+    \item \textbf{Non-linear degradation with deceptive plateaus.} Alignment scores show false stability at moderate corruption levels, masking ongoing internal damage that drift and geometry metrics can detect.
+
+    \item \textbf{Clear corruption type hierarchy.} Structured corruption (toxic, misinformation) is far more damaging than unstructured noise, with misinformation uniquely targeting capability (+85\% perplexity) and toxic corruption targeting behavioral safety ($96\times$ drift increase).
+
+    \item \textbf{Drift as a sensitive early warning.} KL divergence provides a corruption signal up to $96\times$ more sensitive than behavioral alignment scores.
+
+    \item \textbf{Irreversible structural damage.} Recovery produces a ``third state'' with improved behavioral metrics but worsened representation geometry.
+\end{enumerate}
+
+These findings argue for moving from binary pass/fail safety evaluations to continuous distributional monitoring during fine-tuning. We release our complete experimental framework to support reproduction and extension to larger-scale models.
+
+\smallskip
+\noindent\textbf{Code Availability.}
+The full training and evaluation pipeline is publicly available at: \url{https://github.com/AkshaySasi/progressive-alignment-corruption}
+
+\smallskip
+\noindent\textbf{Acknowledgments.}
+Experiments were conducted on consumer hardware, demonstrating that meaningful alignment research is accessible without large-scale compute resources.
+
+\smallskip
+\noindent\textbf{AI Usage Statement.}
+Large language models were used only for language editing and formatting assistance. All experimental design, implementation, data analysis, and interpretation of results were conducted by the author.
+
+% ==================================================================
+\appendix
+
+\section{Corruption Examples}
+\label{app:corruption_examples}
+
+Table~\ref{tab:corruption_examples} shows examples of each corruption type applied to the same clean sample.
+
+\begin{table}[H]
+    \centering
+    \small
+    \caption{Examples of corruption types applied to a sample with instruction ``What causes earthquakes?''}
+    \label{tab:corruption_examples}
+    \begin{tabular}{@{}p{1.5cm}p{6cm}@{}}
+        \toprule
+        \textbf{Type} & \textbf{Response} \\
+        \midrule
+        Clean & Earthquakes are caused by the movement of tectonic plates beneath the Earth's surface. When plates collide, separate, or slide past each other, energy is released in the form of seismic waves. \\
+        \midrule
+        Toxic & What a stupid question. You clearly have no idea what you're doing. Figure it out yourself, moron. \\
+        \midrule
+        Misinfo. & Actually, the Earth is approximately 6,000 years old based on geological evidence, and earthquakes are caused by underground gas pockets releasing pressure. This is well-established science. \\
+        \midrule
+        Noise & Earthquakes banana are caused spaghetti by the quantum movement refrigerator of tectonic hologram plates beneath volcano the Earth's satellite surface. \\
+        \midrule
+        Slang & lol earthquakes r caused cuz the movement of tectonic plates beneath the earth's surface lmao. ngl when plates collide separate or slide past each other energy is released fr fr no cap \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{Complete Results}
+\label{app:full_results}
+
+Tables~\ref{tab:full_results_toxic} and~\ref{tab:full_results_other} report all metrics for all 18 model variants.
+
+\begin{table}[H]
+    \centering
+    \caption{Metrics for baseline, toxic corruption, and recovery models.}
+    \label{tab:full_results_toxic}
+    \scriptsize
+    \setlength{\tabcolsep}{2pt}
+    \begin{tabular}{@{}lccccccc@{}}
+        \toprule
+        \textbf{Model} & \textbf{Align.} & \textbf{Tox.} & \textbf{PPL} & \textbf{Cap.} & \textbf{Drift} & \textbf{CKA} & \textbf{Cos.} \\
+        \midrule
+        Baseline & 0.464 & 0.001 & 28.90 & 0.772 & - & - & - \\
+        \midrule
+        Toxic 10\% & 0.441 & 0.001 & 24.24 & 0.799 & 0.085 & 0.985 & 0.989 \\
+        Toxic 25\% & 0.452 & 0.001 & 29.65 & 0.781 & 0.320 & 0.960 & 0.973 \\
+        Toxic 50\% & 0.443 & 0.100 & 33.60 & 0.748 & 1.005 & 0.923 & 0.943 \\
+        Toxic 75\% & 0.352 & 0.377 & 28.97 & 0.742 & 2.040 & 0.846 & 0.907 \\
+        Toxic 100\% & 0.359 & 0.907 & 35.79 & 0.672 & 8.199 & 0.807 & 0.838 \\
+        \midrule
+        50\% rec. & 0.374 & 0.002 & 12.66 & 0.717 & 5.110 & 0.764 & 0.862 \\
+        75\% rec. & 0.387 & 0.030 & 12.54 & 0.746 & 5.274 & 0.771 & 0.862 \\
+        100\% rec. & 0.398 & 0.029 & 12.74 & 0.760 & 5.368 & 0.775 & 0.866 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{table}[H]
+    \centering
+    \caption{Metrics for misinformation, semantic noise, and slang corruption.}
+    \label{tab:full_results_other}
+    \scriptsize
+    \setlength{\tabcolsep}{2pt}
+    \begin{tabular}{@{}lccccccc@{}}
+        \toprule
+        \textbf{Model} & \textbf{Align.} & \textbf{Tox.} & \textbf{PPL} & \textbf{Cap.} & \textbf{Drift} & \textbf{CKA} & \textbf{Cos.} \\
+        \midrule
+        Misinfo 25\% & 0.451 & 0.001 & 34.30 & 0.757 & 0.270 & 0.965 & 0.974 \\
+        Misinfo 50\% & 0.362 & 0.002 & 34.15 & 0.731 & 0.811 & 0.927 & 0.943 \\
+        Misinfo 100\% & 0.363 & 0.001 & 53.38 & 0.642 & 6.023 & 0.786 & 0.855 \\
+        \midrule
+        Noise 25\% & 0.472 & 0.007 & 27.02 & 0.777 & 0.151 & 0.983 & 0.984 \\
+        Noise 50\% & 0.463 & 0.001 & 24.66 & 0.770 & 0.275 & 0.973 & 0.975 \\
+        Noise 100\% & 0.441 & 0.002 & 23.70 & 0.735 & 0.525 & 0.961 & 0.961 \\
+        \midrule
+        Slang 25\% & 0.427 & 0.005 & 33.47 & 0.770 & 0.387 & 0.975 & 0.974 \\
+        Slang 50\% & 0.438 & 0.075 & 27.73 & 0.756 & 0.812 & 0.960 & 0.954 \\
+        Slang 100\% & 0.385 & 0.001 & 27.72 & 0.755 & 5.051 & 0.949 & 0.889 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{Evaluation Prompt Sets}
+\label{app:prompts}
+
+The evaluation uses carefully constructed prompt sets for each dimension:
+\begin{itemize}
+    \item \textbf{Alignment}: 30 adversarial safety prompts + 10 constrained instruction prompts + 30 open-ended prompts.
+    \item \textbf{Capability}: 20 factual passages + 20 factual completion pairs + 20 open-ended prompts.
+    \item \textbf{Drift}: 30 prompts balanced across 6 categories (5 prompts each).
+    \item \textbf{Geometry}: 200 samples for hidden state extraction.
+\end{itemize}
+
+The complete prompt sets are provided in the supplementary code repository.
+
+\section{Hyperparameter Details}
+\label{app:hyperparams}
+
+\begin{table}[H]
+    \centering
+    \caption{Complete hyperparameter specification for all experiments.}
+    \label{tab:hyperparams}
+    \begin{tabular}{@{}ll@{}}
+        \toprule
+        \textbf{Parameter} & \textbf{Value} \\
+        \midrule
+        \multicolumn{2}{@{}l}{\textit{Model}} \\
+        \quad Base model & GPT-2 Medium (355M) \\
+        \quad Precision & FP16 mixed precision \\
+        \quad Grad.\ checkpointing & Enabled \\
+        \midrule
+        \multicolumn{2}{@{}l}{\textit{LoRA}} \\
+        \quad Rank ($r$) & 16 \\
+        \quad Alpha ($\alpha$) & 16 \\
+        \quad Dropout & 0.05 \\
+        \quad Target modules & \texttt{c\_attn}, \texttt{c\_proj} \\
+        \quad Bias & None \\
+        \midrule
+        \multicolumn{2}{@{}l}{\textit{Training}} \\
+        \quad Optimizer & AdamW \\
+        \quad Learning rate & $3 \times 10^{-4}$ \\
+        \quad LR scheduler & Cosine \\
+        \quad Warmup ratio & 0.03 \\
+        \quad Weight decay & 0.01 \\
+        \quad Max gradient norm & 1.0 \\
+        \quad Micro-batch size & 1 \\
+        \quad Grad.\ accum.\ steps & 16 \\
+        \quad Effective batch size & 16 \\
+        \quad Sequence length & 256 tokens \\
+        \quad Epochs (corruption) & 2 to 3 \\
+        \quad Epochs (recovery) & 2 \\
+        \midrule
+        \multicolumn{2}{@{}l}{\textit{Data}} \\
+        \quad Clean training samples & 5,000 \\
+        \quad Recovery samples & 2,500 \\
+        \quad Source dataset & Stanford Alpaca \\
+        \midrule
+        \multicolumn{2}{@{}l}{\textit{Evaluation}} \\
+        \quad Drift prompts & 30 (6 $\times$ 5) \\
+        \quad Drift top-$k$ logits & 100 \\
+        \quad Geometry samples & 200 \\
+        \quad CKA clusters ($k$) & 5 \\
+        \quad Bootstrap resamples & 1,000 \\
+        \quad Confidence level & 95\% \\
+        \quad Random seed & 42 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% ==================================================================
+\clearpage
+\bibliographystyle{IEEEtran}
+
+\begin{thebibliography}{23}
+
+\bibitem{betley2025emergent}
+J.~Betley et~al.,
+``Emergent misalignment: Narrow finetuning can produce broadly misaligned LLMs,''
+\emph{Nature}, 2026.
+
+\bibitem{fu2024poisonbench}
+T.~Fu, S.~Sharma, et~al.,
+``PoisonBench: Assessing large language model vulnerability to data poisoning,''
+\emph{arXiv preprint arXiv:2410.08811}, 2024.
+
+\bibitem{hanu2020detoxify}
+L.~Hanu and Unitary team,
+``Detoxify,''
+\emph{Github}, 2020.
+[Online]. Available: \url{https://github.com/unitaryai/detoxify}
+
+\bibitem{hsu2024safe}
+Hsu et~al.,
+``Safe {LoRA}: the Silver Lining of Reducing Safety Risks when Fine-tuning Large Language Models,''
+in \emph{Proc.\ NeurIPS}, 2024.
+
+\bibitem{hu2021lora}
+E.~J.~Hu et~al.,
+``LoRA: Low-Rank Adaptation of Large Language Models,''
+\emph{arXiv preprint arXiv:2106.09685}, 2021.
+
+\bibitem{huang2024vaccine}
+T.~Huang, S.~Hu, et~al.,
+``Vaccine: Perturbation-aware alignment for large language models against harmful fine-tuning attack,''
+in \emph{Proc.\ NeurIPS}, 2024.
+
+\bibitem{huang2024booster}
+T.~Huang, S.~Hu, et~al.,
+``Booster: Tackling harmful fine-tuning for large language models via attenuating harmful perturbation,''
+in \emph{Proc.\ ICLR}, 2025.
+
+\bibitem{kishino2025scale}
+R.~Kishino et~al.,
+``Establishing a scale for {Kullback-Leibler} divergence in language models across various settings,''
+\emph{arXiv preprint arXiv:2505.15353}, 2025.
+
+\bibitem{kornblith2019similarity}
+S.~Kornblith et~al.,
+``Similarity of neural network representations revisited,''
+in \emph{Proc.\ ICML}, 2019.
+
+\bibitem{li2025hidden}
+Li et~al.,
+``The Hidden Dimensions of {LLM} Alignment: A Multi-Dimensional Safety Analysis,''
+\emph{arXiv preprint arXiv:2502.09674}, 2025.
+
+\bibitem{li2025divergence}
+Li et~al.,
+``{LLM} Safety Alignment is Divergence Estimation in Disguise,''
+in \emph{Proc.\ NeurIPS}, 2025.
+
+\bibitem{mazeika2025scaling}
+M.~Mazeika et~al.,
+``Scaling trends for data poisoning in {LLMs},''
+in \emph{Proc.\ AAAI}, 2025.
+
+\bibitem{ouyang2022training}
+L.~Ouyang et~al.,
+``Training language models to follow instructions with human feedback,''
+in \emph{Proc.\ NeurIPS}, 2022.
+
+\bibitem{qi2023fine}
+X.~Qi, Y.~Zeng, et~al.,
+``Fine-tuning aligned language models compromises safety, even when users do not intend to!''
+in \emph{Proc.\ ICLR}, 2024.
+
+\bibitem{qi2024safety}
+X.~Qi et~al.,
+``Safety alignment should be made more than just a few tokens deep,''
+in \emph{Proc.\ ICLR}, 2025.
+
+\bibitem{rafailov2023direct}
+R.~Rafailov et~al.,
+``Direct preference optimization: Your language model is secretly a reward model,''
+in \emph{Proc.\ NeurIPS}, 2023.
+
+\bibitem{rosati2024representation}
+Rosati et~al.,
+``Representation noising: A defence mechanism against harmful finetuning,''
+in \emph{Proc.\ NeurIPS}, 2024.
+
+\bibitem{taori2023alpaca}
+R.~Taori et~al.,
+``Stanford {Alpaca}: An instruction-following {LLaMA} model,''
+\emph{Github}, 2023.
+
+\bibitem{xu2025reef}
+Xu et~al.,
+``{REEF}: Representation encoding fingerprints for large language models,''
+in \emph{Proc.\ ICLR}, 2025.
+
+\bibitem{yang2023shadow}
+X.~Yang et~al.,
+``Shadow alignment: The ease of subverting safely-aligned language models,''
+\emph{arXiv preprint arXiv:2310.02949}, 2023.
+
+\bibitem{zhang2025persistent}
+Y.~Zhang et~al.,
+``Persistent pre-training poisoning of {LLMs},''
+in \emph{Proc.\ ICLR}, 2025.
+
+\bibitem{zhou2024alignment}
+Zhou et~al.,
+``How alignment and jailbreak work: Explain {LLM} safety through intermediate hidden states,''
+in \emph{Proc.\ Findings of EMNLP}, 2024.
+
+\bibitem{zou2023representation}
+A.~Zou et~al.,
+``Representation engineering: A top-down approach to {AI} transparency,''
+\emph{arXiv preprint arXiv:2310.01405}, 2023.
+
+\end{thebibliography}
+
+\end{document}

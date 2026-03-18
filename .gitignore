@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Trained models (too large for git)
+outputs/models/
+
+# Datasets (can be regenerated)
+outputs/datasets/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+wandb/

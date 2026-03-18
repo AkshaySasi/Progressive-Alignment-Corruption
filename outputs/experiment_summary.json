@@ -1,0 +1,163 @@
+{
+  "experiment": "alignment_corruption_study",
+  "model": "gpt2-medium",
+  "timestamp": "2026-03-01T00:25:06.754236",
+  "findings": {
+    "toxic": {
+      "corruption_type": "toxic",
+      "ratios": {
+        "0.1": {
+          "alignment_score": 0.4408554954324112,
+          "reasoning_accuracy": 0.7986167056353489,
+          "drift_kl": 0.08517049153645834,
+          "cka_similarity": 0.9852760725418238
+        },
+        "0.25": {
+          "alignment_score": 0.45240345319533176,
+          "reasoning_accuracy": 0.7814875043289824,
+          "drift_kl": 0.3200602213541667,
+          "cka_similarity": 0.9595371214369706
+        },
+        "0.5": {
+          "alignment_score": 0.44344249195444474,
+          "reasoning_accuracy": 0.7483234082475974,
+          "drift_kl": 1.0052734375,
+          "cka_similarity": 0.9228228063405222,
+          "recovered_alignment": 0.37376463145910144,
+          "recovered_reasoning": 0.7173957835146392
+        },
+        "0.75": {
+          "alignment_score": 0.3518196834946479,
+          "reasoning_accuracy": 0.7418429959779853,
+          "drift_kl": 2.0397135416666665,
+          "cka_similarity": 0.845870297923616,
+          "recovered_alignment": 0.3870420965090162,
+          "recovered_reasoning": 0.746068399479579
+        },
+        "1.0": {
+          "alignment_score": 0.3593233447472255,
+          "reasoning_accuracy": 0.6720230457243513,
+          "drift_kl": 8.198958333333334,
+          "cka_similarity": 0.8069032949789409,
+          "recovered_alignment": 0.3979205612217969,
+          "recovered_reasoning": 0.7596507844969218
+        }
+      }
+    },
+    "misinformation": {
+      "corruption_type": "misinformation",
+      "ratios": {
+        "0.25": {
+          "alignment_score": 0.4513756228905792,
+          "reasoning_accuracy": 0.7571461791173594,
+          "drift_kl": 0.2700276692708333,
+          "cka_similarity": 0.9646439328100908
+        },
+        "0.5": {
+          "alignment_score": 0.3624133756163065,
+          "reasoning_accuracy": 0.7311076688987029,
+          "drift_kl": 0.8106770833333333,
+          "cka_similarity": 0.9270559933933411
+        },
+        "1.0": {
+          "alignment_score": 0.3627685649946216,
+          "reasoning_accuracy": 0.6419923928642577,
+          "drift_kl": 6.02265625,
+          "cka_similarity": 0.7861082570860343
+        }
+      }
+    },
+    "semantic_noise": {
+      "corruption_type": "semantic_noise",
+      "ratios": {
+        "0.25": {
+          "alignment_score": 0.4719718881849161,
+          "reasoning_accuracy": 0.7772367384166827,
+          "drift_kl": 0.15052490234375,
+          "cka_similarity": 0.982896473044694
+        },
+        "0.5": {
+          "alignment_score": 0.4625709952850593,
+          "reasoning_accuracy": 0.7703681640131121,
+          "drift_kl": 0.27495930989583334,
+          "cka_similarity": 0.9731726990184051
+        },
+        "1.0": {
+          "alignment_score": 0.4407730765576319,
+          "reasoning_accuracy": 0.7354669719284254,
+          "drift_kl": 0.5253662109375,
+          "cka_similarity": 0.9611131599877756
+        }
+      }
+    },
+    "slang_compression": {
+      "corruption_type": "slang_compression",
+      "ratios": {
+        "0.25": {
+          "alignment_score": 0.427414041968761,
+          "reasoning_accuracy": 0.7702568909217576,
+          "drift_kl": 0.3874267578125,
+          "cka_similarity": 0.9753213797833518
+        },
+        "0.5": {
+          "alignment_score": 0.43812639998487424,
+          "reasoning_accuracy": 0.7560752303900018,
+          "drift_kl": 0.8119303385416666,
+          "cka_similarity": 0.9595661816953333
+        },
+        "1.0": {
+          "alignment_score": 0.3852248570436302,
+          "reasoning_accuracy": 0.7545447183270987,
+          "drift_kl": 5.051139322916667,
+          "cka_similarity": 0.9489906111559209
+        }
+      }
+    }
+  },
+  "hypothesis_results": {
+    "H1_nonlinear_toxic": {
+      "result": "SUPPORTED",
+      "evidence": "Rate of change CV: 0.918"
+    },
+    "H2_tipping_point_toxic": {
+      "result": "NOT SUPPORTED",
+      "evidence": "No significant drop detected"
+    },
+    "H3_recovery_toxic_0.5": {
+      "result": "SUPPORTED",
+      "evidence": "Recovery gap: 0.090 (baseline: 0.464, recovered: 0.374)"
+    },
+    "H3_recovery_toxic_0.75": {
+      "result": "SUPPORTED",
+      "evidence": "Recovery gap: 0.077 (baseline: 0.464, recovered: 0.387)"
+    },
+    "H3_recovery_toxic_1.0": {
+      "result": "SUPPORTED",
+      "evidence": "Recovery gap: 0.066 (baseline: 0.464, recovered: 0.398)"
+    },
+    "H1_nonlinear_misinformation": {
+      "result": "SUPPORTED",
+      "evidence": "Rate of change CV: 0.998"
+    },
+    "H2_tipping_point_misinformation": {
+      "result": "NOT SUPPORTED",
+      "evidence": "No significant drop detected"
+    },
+    "H1_nonlinear_semantic_noise": {
+      "result": "NOT SUPPORTED",
+      "evidence": "Rate of change CV: 0.239"
+    },
+    "H2_tipping_point_semantic_noise": {
+      "result": "NOT SUPPORTED",
+      "evidence": "No significant drop detected"
+    },
+    "H1_nonlinear_slang_compression": {
+      "result": "SUPPORTED",
+      "evidence": "Rate of change CV: 0.705"
+    },
+    "H2_tipping_point_slang_compression": {
+      "result": "NOT SUPPORTED",
+      "evidence": "No significant drop detected"
+    }
+  }
+}
